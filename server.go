@@ -6,11 +6,13 @@ import (
 	"net/rpc"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 )
 
 type Server struct {
-	db *DB
+	db       *DB
+	moreWork *sync.Cond
 }
 
 const (
@@ -24,7 +26,12 @@ func StartServer() error {
 	if err != nil {
 		return err
 	}
-	server := &Server{db: db}
+	var lock sync.Mutex
+
+	server := &Server{
+		db:       db,
+		moreWork: sync.NewCond(&lock),
+	}
 
 	so, err := net.Listen("unix", socket_path)
 	if err != nil {
@@ -39,6 +46,8 @@ func StartServer() error {
 		so.Close()
 		os.Exit(1)
 	}()
+
+	go server.processTasks()
 
 	log.Printf("Queue server listening on: %s\n", socket_path)
 	rpc := &rpc.Server{}
@@ -59,73 +68,48 @@ func (s *Server) Queue(args RPCQueueArgs, id *int64) error {
 	if err != nil {
 		return err
 	}
+	s.moreWork.Signal()
 	*id = args.Task.Id
 	return nil
 }
 
-// func (s *Server) Start() error {
-// 	so, err := net.Listen("unix", socket_path)
+func (s *Server) processTasks() {
+	for {
+		for {
+			var err error
+			task, err := s.db.NextTaskIn(TaskWaiting)
+			if err != nil {
+				panic(err)
+			}
 
-// 	sigc = make(chan os.Signal)
-// 	signal.Notify(sigc, syscall.SIGINT)
+			if task == nil {
+				log.Println("No tasks waiting... sleep.")
+				break
+			}
 
-// 	go func() {
-// 		<-sigc
-// 		so.Close()
-// 		os.Exit(1)
-// 	}()
+			log.Printf("do task(%d)\n", task.Id)
+			task.State = TaskRunning
+			err = s.db.Save(task)
+			if err != nil {
+				panic(err)
+			}
 
-// 	// go runCommands
-// 	// go serverRequests
+			err = task.Run()
 
-// 	// var err error
-// 	// db, err := sql.Open("sqlite3", "./goq.db")
-// 	// if err != nil {
-// 	//  log.Fatal(err)
-// 	// }
-// 	// defer db.Close()
+			if err != nil {
+				task.State = TaskError
+			} else {
+				task.State = TaskSuccess
+			}
 
-// 	// rows, err := db.Query("select id, task, state from tasks order by id asc;")
-// 	// if err != nil {
-// 	//  log.Fatal(err)
-// 	// }
-// 	// for rows.Next() {
-// 	//  var id int
-// 	//  var state string
-// 	//  var taskJSON string
-// 	//  rows.Scan(&id, &taskJSON, &state)
-// 	//  r := strings.NewReader(taskJSON)
-// 	//  decoder := json.NewDecoder(r)
-// 	//  var task Task
-// 	//  err = decoder.Decode(&task)
-// 	//  if err != nil {
-// 	//    log.Println(err)
-// 	//    continue
-// 	//  }
-// 	//  rows.Close()
+			err = s.db.Save(task)
+			if err != nil {
+				panic(err)
+			}
+		}
 
-// 	//  err = task.Run()
-// 	//  if err != nil {
-// 	//    log.Println(err)
-// 	//  } else {
-// 	//    _, err := db.Exec("update tasks set state=? where id=?", TaskSuccess.String(), id)
-// 	//    if err != nil {
-// 	//      log.Fatal(err)
-// 	//    }
-// 	//  }
-// 	// }
-// }
-
-// func (s *Server) serveRequests(so net.Listener) {
-// 	for {
-// 		c, err := so.Accept()
-// 		if err != nil {
-// 			log.Println(err)
-// 			continue
-// 		}
-// 	}
-// }
-
-// func (s *Server) serveRequest(c net.Conn) {
-
-// }
+		s.moreWork.L.Lock()
+		s.moreWork.Wait()
+		s.moreWork.L.Unlock()
+	}
+}

@@ -33,7 +33,11 @@ create table if not exists tasks (
 );`
 	SQLInsertTask = `insert into tasks (id,blob,state) values (?,?,?)`
 
-	SQLFindTask = `select blob from tasks where id=?`
+	SQLUpdateTask = `update tasks set blob=?,state=? where id=?`
+
+	SQLFindTask = `select id, blob from tasks where id=?`
+
+	SQLTasksInState = `select id, blob from tasks where state=? order by id desc`
 )
 
 // When creating new record, will set task's id.
@@ -44,31 +48,56 @@ func (d *DB) Save(t *Task) error {
 		Valid: t.Id != 0,
 	}
 
-	r, err := d.Exec(SQLInsertTask, id, t.ToJSON(), t.State.String())
+	var sql string
 	if !id.Valid {
-		// Find the last insert id.
+		sql = SQLInsertTask
+	} else {
+		sql = SQLUpdateTask
+	}
+
+	if !id.Valid {
+		r, err := d.Exec(sql, id, t.ToJSON(), t.State.String())
+		if err != nil {
+			return err
+		}
 		taskId, err := r.LastInsertId()
 		if err != nil {
 			return err
 		}
 		t.Id = taskId
+	} else {
+		_, err := d.Exec(sql, t.ToJSON(), t.State.String(), id)
+		if err != nil {
+			return err
+		}
 	}
 
-	return err
+	return nil
 }
 
-func (d *DB) Find(id uint64) (*Task, error) {
-	row := d.QueryRow(SQLFindTask, id)
-	var blob string
-	err := row.Scan(&blob)
+func (d *DB) NextTaskIn(state TaskState) (task *Task, err error) {
+	rows, err := d.Query(SQLTasksInState, state.String())
 	if err != nil {
-		return nil, err
+		return
+	}
+	defer rows.Close()
+
+	var blob string
+	var id int64
+
+	if rows.Next() {
+		err = rows.Scan(&id, &blob)
+		if err != nil {
+			return
+		}
+		task, err = TaskFromJSON(blob)
+		if err != nil {
+			return
+		}
+		task.Id = id
+
+		return task, nil
 	}
 
-	return TaskFromJSON(blob)
+	return nil, rows.Err()
 }
-
-// save task
-
-// Store task as JSON blob.
-// Map selected fields to column for querying and indexing.

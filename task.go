@@ -13,7 +13,7 @@ type TaskState int
 
 const (
 	TaskWaiting TaskState = iota
-	TasKError
+	TaskError
 	TaskSuccess
 	TaskRunning
 	TaskStopped
@@ -21,7 +21,7 @@ const (
 
 var TaskStateNames = [...]string{
 	TaskWaiting: "waiting",
-	TasKError:   "error",
+	TaskError:   "error",
 	TaskSuccess: "success",
 	TaskRunning: "running",
 	TaskStopped: "stopped",
@@ -47,7 +47,7 @@ func NewTaskWithEnv(cmd string, args ...string) *Task {
 }
 
 type Task struct {
-	Id    int64
+	Id    int64 `json:"-"`
 	Env   []string
 	Cwd   string
 	Cmd   string
