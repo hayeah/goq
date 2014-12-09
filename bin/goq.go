@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"github.com/hayeah/goq"
 	"log"
 	"net/rpc"
@@ -49,6 +50,6 @@ func queue(cmd string, args ...string) error {
 		return err
 	}
 
-	log.Printf("new task id: %d\n", id)
+	fmt.Fprintln(os.Stdout, id)
 	return nil
 }
