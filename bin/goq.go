@@ -18,7 +18,7 @@ func main() {
 		if len(os.Args) < 2 {
 			log.Fatal("go queue <cmd> arg ...")
 		} else {
-			err = queue(os.Args[2], os.Args[2:]...)
+			err = queue(os.Args[2], os.Args[3:]...)
 		}
 	}
 	if err != nil {
@@ -37,7 +37,10 @@ func queue(cmd string, args ...string) error {
 		return err
 	}
 
-	task := goq.NewTaskWithEnv(cmd, args...)
+	task, err := goq.NewTaskWithEnv(cmd, args...)
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	qArgs := &goq.RPCQueueArgs{Task: *task}
 	var id int64

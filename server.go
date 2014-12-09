@@ -11,13 +11,17 @@ import (
 )
 
 type Server struct {
-	db       *DB
-	moreWork *sync.Cond
+	db          *DB
+	moreWork    *sync.Cond
+	workersChan chan Empty
 }
 
+type Empty struct{}
+
 const (
-	db_path     = "./goq.db"
-	socket_path = "./goq.socket"
+	db_path        = "./goq.db"
+	socket_path    = "./goq.socket"
+	server_workers = 4
 )
 
 // server loop
@@ -29,8 +33,9 @@ func StartServer() error {
 	var lock sync.Mutex
 
 	server := &Server{
-		db:       db,
-		moreWork: sync.NewCond(&lock),
+		db:          db,
+		moreWork:    sync.NewCond(&lock),
+		workersChan: make(chan Empty, server_workers),
 	}
 
 	so, err := net.Listen("unix", socket_path)
@@ -49,6 +54,7 @@ func StartServer() error {
 
 	go server.processTasks()
 
+	log.Printf("server pid: %d\n", os.Getpid())
 	log.Printf("Queue server listening on: %s\n", socket_path)
 	rpc := &rpc.Server{}
 	err = rpc.Register(server)
@@ -94,22 +100,38 @@ func (s *Server) processTasks() {
 				panic(err)
 			}
 
-			err = task.Run()
-
-			if err != nil {
-				task.State = TaskError
-			} else {
-				task.State = TaskSuccess
-			}
-
-			err = s.db.Save(task)
-			if err != nil {
-				panic(err)
-			}
+			var empty Empty
+			// limit number of workers
+			s.workersChan <- empty
+			go func() {
+				err := s.processTask(task)
+				if err != nil {
+					panic(err)
+				}
+				<-s.workersChan
+			}()
 		}
 
 		s.moreWork.L.Lock()
 		s.moreWork.Wait()
 		s.moreWork.L.Unlock()
 	}
+}
+
+func (s *Server) processTask(task *Task) error {
+	var err error
+
+	err = task.Run()
+
+	if err != nil {
+		task.State = TaskError
+	} else {
+		task.State = TaskSuccess
+	}
+
+	err = s.db.Save(task)
+	if err != nil {
+		return err
+	}
+	return nil
 }

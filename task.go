@@ -31,19 +31,24 @@ func (t TaskState) String() string {
 	return TaskStateNames[t]
 }
 
-func NewTaskWithEnv(cmd string, args ...string) *Task {
+func NewTaskWithEnv(cmd string, args ...string) (*Task, error) {
 	cwd, err := os.Getwd()
 	if err != nil {
-		log.Fatal(err)
+		return nil, err
+	}
+
+	exe, err := exec.LookPath(cmd)
+	if err != nil {
+		return nil, err
 	}
 
 	return &Task{
 		Env:   os.Environ(),
 		Cwd:   cwd,
-		Cmd:   cmd,
+		Cmd:   exe,
 		Args:  args,
 		State: TaskWaiting,
-	}
+	}, nil
 }
 
 type Task struct {
@@ -57,6 +62,7 @@ type Task struct {
 
 func (t *Task) Run() error {
 	log.Printf("running: %v %v\n", t.Cmd, t.Args)
+
 	cmd := exec.Command(t.Cmd, t.Args...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
@@ -64,6 +70,7 @@ func (t *Task) Run() error {
 	cmd.Env = t.Env
 	cmd.Dir = t.Cwd
 	err := cmd.Run()
+	log.Printf("exits: %v %v\n", t.Cmd, t.Args)
 	return err
 }
 
