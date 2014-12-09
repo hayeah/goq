@@ -60,18 +60,15 @@ type Task struct {
 	State TaskState
 }
 
-func (t *Task) Run() error {
-	log.Printf("running: %v %v\n", t.Cmd, t.Args)
-
+func (t *Task) Command() *exec.Cmd {
 	cmd := exec.Command(t.Cmd, t.Args...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Env = t.Env
 	cmd.Dir = t.Cwd
-	err := cmd.Run()
-	log.Printf("exits: %v %v\n", t.Cmd, t.Args)
-	return err
+	return cmd
+
 }
 
 func (t *Task) ToJSON() string {

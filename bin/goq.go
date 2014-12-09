@@ -14,6 +14,7 @@ var subcommands = map[string]subcommand{
 	"queue": cmd.Add,
 	"start": cmd.Server,
 	"list":  cmd.List,
+	"stop":  cmd.Stop,
 }
 
 const Usage = `

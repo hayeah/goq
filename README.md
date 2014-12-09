@@ -1,5 +1,7 @@
 A probably hazardous shell-based work queue.
 
+(Work in progress.)
+
 # commands
 
 ## add
@@ -31,6 +33,16 @@ Redo a particular task:
 ```
 goq redo <taskid>
 ```
+
+## Stop
+
+Kill a running task's process.
+
+```
+goq kill <signal>
+```
+
+Can restart later with `goq redo`
 
 # outputs job id
 

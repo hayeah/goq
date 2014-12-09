@@ -1,6 +1,7 @@
 package goq
 
 import (
+	"fmt"
 	"log"
 	"net"
 	"net/rpc"
@@ -14,6 +15,7 @@ type Server struct {
 	db          *DB
 	moreWork    *sync.Cond
 	workersChan chan Empty
+	killChans   map[int64]chan syscall.Signal
 }
 
 type Empty struct{}
@@ -36,6 +38,7 @@ func StartServer() error {
 		db:          db,
 		moreWork:    sync.NewCond(&lock),
 		workersChan: make(chan Empty, server_workers),
+		killChans:   make(map[int64]chan syscall.Signal),
 	}
 
 	so, err := net.Listen("unix", socket_path)
@@ -73,15 +76,27 @@ type RPCListArgs struct {
 	State TaskState
 }
 
+type RPCStopArgs struct {
+	TaskId int64
+	Signal syscall.Signal
+}
+
+func (s *Server) Stop(args RPCStopArgs, taskId *int64) error {
+	killch, ok := s.killChans[args.TaskId]
+	if ok {
+		killch <- args.Signal
+		*taskId = args.TaskId
+		return nil
+	} else {
+		return fmt.Errorf("Task is not running: %d", args.TaskId)
+	}
+}
+
 func (s *Server) List(args RPCListArgs, rtasks *[]Task) error {
 	tasks, err := s.db.List(args.State)
 	if err != nil {
 		return err
 	}
-
-	// rtasks = &tasks
-
-	log.Printf("list tasks: %#v\n", tasks)
 
 	*rtasks = tasks
 
@@ -140,14 +155,48 @@ func (s *Server) processTasks() {
 func (s *Server) processTask(task *Task) error {
 	var err error
 
-	err = task.Run()
+	cmd := task.Command()
+	err = cmd.Start()
 
 	if err != nil {
+		log.Printf("task(%d): %s\n", task.Id, err)
 		task.State = TaskError
 	} else {
-		task.State = TaskSuccess
+		killChan := make(chan syscall.Signal)
+		exitChan := make(chan error)
+		go func() {
+			err := cmd.Wait()
+			exitChan <- err
+		}()
+
+		s.killChans[task.Id] = killChan
+
+		killed := false
+
+	L:
+		for {
+			var err error
+			select {
+			case err = <-exitChan:
+				// normal or error exit
+				if killed {
+					task.State = TaskStopped
+				} else if err != nil {
+					task.State = TaskError
+				} else {
+					task.State = TaskSuccess
+				}
+				break L
+			case sig := <-killChan:
+				// send signals to task's process
+				killed = true
+				cmd.Process.Signal(sig)
+			}
+		}
 	}
 
+	delete(s.killChans, task.Id)
+	log.Printf("exit task(%d): %s\n", task.Id, task.State.String())
 	err = s.db.Save(task)
 	if err != nil {
 		return err
