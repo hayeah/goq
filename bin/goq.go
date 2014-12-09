@@ -1,55 +1,46 @@
 package main
 
 import (
-	"fmt"
-	"github.com/hayeah/goq"
+	"github.com/hayeah/goq/cmd"
 	"log"
-	"net/rpc"
 	"os"
 )
 
+type subcommand func(argv []string) error
+
+var subcommands = map[string]subcommand{
+	"add":   cmd.Add,
+	"queue": cmd.Add,
+	"start": cmd.Server,
+}
+
+const Usage = `
+goq - A probably hazardous queue server.
+  start - start the queue server
+  queue - same as "start"
+  add - queue a task
+
+goq <cmd> -h for more details.
+`
+
 func main() {
+	var argv []string
+	if len(os.Args) < 2 {
+		cmd.Server(argv)
+	}
 	mode := os.Args[1]
 
-	var err error
-	switch mode {
-	case "server":
-		err = server()
-	case "q", "queue":
-		if len(os.Args) < 2 {
-			log.Fatal("go queue <cmd> arg ...")
-		} else {
-			err = queue(os.Args[2], os.Args[3:]...)
-		}
+	subcmd, ok := subcommands[mode]
+
+	if !ok {
+		log.Fatalf("Command not recognized: %s\n", mode)
 	}
+
+	argv = os.Args[2:]
+	err := subcmd(argv)
+
 	if err != nil {
 		log.Fatal(err)
 	}
 
-}
-
-func server() error {
-	return goq.StartServer()
-}
-
-func queue(cmd string, args ...string) error {
-	client, err := rpc.Dial("unix", "./goq.socket")
-	if err != nil {
-		return err
-	}
-
-	task, err := goq.NewTaskWithEnv(cmd, args...)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	qArgs := &goq.RPCQueueArgs{Task: *task}
-	var id int64
-	err = client.Call("Server.Queue", qArgs, &id)
-	if err != nil {
-		return err
-	}
-
-	fmt.Fprintln(os.Stdout, id)
-	return nil
 }
