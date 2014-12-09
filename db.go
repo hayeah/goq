@@ -2,6 +2,8 @@ package goq
 
 import (
 	"database/sql"
+	"log"
+
 	_ "github.com/mattn/go-sqlite3"
 )
 
@@ -37,8 +39,41 @@ create table if not exists tasks (
 
 	SQLFindTask = `select id, blob from tasks where id=?`
 
-	SQLTasksInState = `select id, blob from tasks where state=? order by id desc`
+	SQLTasksInState = `select id, blob from tasks where state=? order by id asc`
 )
+
+func (d *DB) List(state TaskState) ([]Task, error) {
+	log.Println("list", state.String())
+	rows, err := d.Query(SQLTasksInState, state.String())
+	if err != nil {
+		return nil, err
+	}
+
+	var tasks []Task
+	var blob string
+	var id int64
+	for rows.Next() {
+		err := rows.Scan(&id, &blob)
+		if err != nil {
+			log.Println(err)
+			continue
+		}
+		task, err := TaskFromJSON(blob)
+		if err != nil {
+			log.Println(err)
+			continue
+		}
+
+		task.Id = id
+		tasks = append(tasks, *task)
+	}
+
+	err = rows.Err()
+	if err != nil {
+		log.Println(err)
+	}
+	return tasks, nil
+}
 
 // When creating new record, will set task's id.
 func (d *DB) Save(t *Task) error {

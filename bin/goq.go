@@ -1,9 +1,10 @@
 package main
 
 import (
-	"github.com/hayeah/goq/cmd"
 	"log"
 	"os"
+
+	"github.com/hayeah/goq/cmd"
 )
 
 type subcommand func(argv []string) error
@@ -12,6 +13,7 @@ var subcommands = map[string]subcommand{
 	"add":   cmd.Add,
 	"queue": cmd.Add,
 	"start": cmd.Server,
+	"list":  cmd.List,
 }
 
 const Usage = `
@@ -24,9 +26,11 @@ goq <cmd> -h for more details.
 `
 
 func main() {
+	var err error
 	var argv []string
 	if len(os.Args) < 2 {
-		cmd.Server(argv)
+		err = cmd.Server(argv)
+		log.Fatalln(err)
 	}
 	mode := os.Args[1]
 
@@ -37,7 +41,7 @@ func main() {
 	}
 
 	argv = os.Args[2:]
-	err := subcmd(argv)
+	err = subcmd(argv)
 
 	if err != nil {
 		log.Fatal(err)

@@ -69,6 +69,25 @@ type RPCQueueArgs struct {
 	Task Task
 }
 
+type RPCListArgs struct {
+	State TaskState
+}
+
+func (s *Server) List(args RPCListArgs, rtasks *[]Task) error {
+	tasks, err := s.db.List(args.State)
+	if err != nil {
+		return err
+	}
+
+	// rtasks = &tasks
+
+	log.Printf("list tasks: %#v\n", tasks)
+
+	*rtasks = tasks
+
+	return nil
+}
+
 func (s *Server) Queue(args RPCQueueArgs, id *int64) error {
 	err := s.db.Save(&args.Task)
 	if err != nil {
