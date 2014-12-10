@@ -44,6 +44,20 @@ goq kill <signal>
 
 Can restart later with `goq redo`
 
+## workers
+
+Dynamically adjust the number of workers
+
+```
+goq worker 10
+```
+
+Show number of workers:
+
+```
+goq worker
+```
+
 # outputs job id
 
 ```

@@ -7,14 +7,17 @@ import (
 	"net/rpc"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 )
 
 type Server struct {
-	db          *DB
-	moreWork    chan Empty
-	workersChan chan Empty
-	killChans   map[int64]chan syscall.Signal
+	db                         *DB
+	moreWork                   chan Empty
+	workersChan                chan Empty
+	killChans                  map[int64]chan syscall.Signal
+	numberOfWorkers            int
+	adjustNumberOfWorkersEvent chan Empty
 }
 
 type Empty struct{}
@@ -33,10 +36,12 @@ func StartServer() error {
 	}
 
 	server := &Server{
-		db:          db,
-		moreWork:    make(chan Empty),
-		workersChan: make(chan Empty, server_workers),
-		killChans:   make(map[int64]chan syscall.Signal),
+		db:                         db,
+		moreWork:                   make(chan Empty, 1),
+		numberOfWorkers:            server_workers,
+		workersChan:                make(chan Empty, server_workers),
+		killChans:                  make(map[int64]chan syscall.Signal),
+		adjustNumberOfWorkersEvent: make(chan Empty, 1),
 	}
 
 	so, err := net.Listen("unix", socket_path)
@@ -79,6 +84,31 @@ type RPCStopArgs struct {
 	Signal syscall.Signal
 }
 
+type RPCWorkersArgs struct {
+	NumberOfWorkers      int
+	CheckNumberOfWorkers bool
+}
+
+func (s *Server) Workers(args RPCWorkersArgs, n *int) error {
+	if args.CheckNumberOfWorkers {
+		*n = s.numberOfWorkers
+		return nil
+	}
+
+	s.numberOfWorkers = args.NumberOfWorkers
+
+	var empty Empty
+	select {
+	case s.adjustNumberOfWorkersEvent <- empty:
+		log.Printf("Will adjust workers number to: %d\n", s.numberOfWorkers)
+	default:
+		log.Println("workers already sent event")
+	}
+
+	*n = args.NumberOfWorkers
+	return nil
+}
+
 func (s *Server) Stop(args RPCStopArgs, taskId *int64) error {
 	killch, ok := s.killChans[args.TaskId]
 	if ok {
@@ -117,10 +147,34 @@ func (s *Server) Queue(args RPCQueueArgs, id *int64) error {
 	return nil
 }
 
+// Copy existing messages to new channel.
+// Discard messages that exceeds the capacity of the new channel.
+func (s *Server) adjustWorkersChan() {
+	if cap(s.workersChan) != s.numberOfWorkers {
+		log.Printf("Adjusting workers: %d -> %d\n", cap(s.workersChan), s.numberOfWorkers)
+		log.Printf("Number of running tasks: %d\n", len(s.workersChan))
+		oldChan := s.workersChan
+		newChan := make(chan Empty, s.numberOfWorkers)
+		close(oldChan)
+	L:
+		for empty := range s.workersChan {
+			select {
+			case newChan <- empty:
+			default:
+				break L
+			}
+		}
+
+		s.workersChan = newChan
+	}
+}
+
 func (s *Server) processTasks() {
 	for {
+		var workersLock sync.RWMutex
 		for {
 			var err error
+
 			task, err := s.db.NextTaskIn(TaskWaiting)
 			if err != nil {
 				panic(err)
@@ -131,6 +185,23 @@ func (s *Server) processTasks() {
 				break
 			}
 
+			var empty Empty
+
+		L:
+			for {
+				select {
+				case <-s.adjustNumberOfWorkersEvent:
+					// After adjust, try the workersChan again.
+					workersLock.Lock()
+					s.adjustWorkersChan()
+					workersLock.Unlock()
+				// limit number of workers
+				case s.workersChan <- empty:
+					// Don't need to lock this. Is already mutex with adjustWorkersChan because it's not a separate goroutine.
+					break L
+				}
+			}
+
 			log.Printf("do task(%d)\n", task.Id)
 			task.State = TaskRunning
 			err = s.db.Save(task)
@@ -138,15 +209,18 @@ func (s *Server) processTasks() {
 				panic(err)
 			}
 
-			var empty Empty
-			// limit number of workers
-			s.workersChan <- empty
 			go func() {
 				err := s.processTask(task)
 				if err != nil {
 					panic(err)
 				}
-				<-s.workersChan
+				workersLock.RLock()
+				select {
+				case <-s.workersChan:
+				default:
+					// If workers capacity decreased, there could be more running processes than message tokens in workersChan.
+				}
+				workersLock.RUnlock()
 			}()
 		}
 

@@ -10,11 +10,12 @@ import (
 type subcommand func(argv []string) error
 
 var subcommands = map[string]subcommand{
-	"add":   cmd.Add,
-	"queue": cmd.Add,
-	"start": cmd.Server,
-	"list":  cmd.List,
-	"stop":  cmd.Stop,
+	"add":     cmd.Add,
+	"queue":   cmd.Add,
+	"start":   cmd.Server,
+	"list":    cmd.List,
+	"stop":    cmd.Stop,
+	"workers": cmd.Workers,
 }
 
 const Usage = `
