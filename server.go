@@ -7,13 +7,12 @@ import (
 	"net/rpc"
 	"os"
 	"os/signal"
-	"sync"
 	"syscall"
 )
 
 type Server struct {
 	db          *DB
-	moreWork    *sync.Cond
+	moreWork    chan Empty
 	workersChan chan Empty
 	killChans   map[int64]chan syscall.Signal
 }
@@ -32,11 +31,10 @@ func StartServer() error {
 	if err != nil {
 		return err
 	}
-	var lock sync.Mutex
 
 	server := &Server{
 		db:          db,
-		moreWork:    sync.NewCond(&lock),
+		moreWork:    make(chan Empty),
 		workersChan: make(chan Empty, server_workers),
 		killChans:   make(map[int64]chan syscall.Signal),
 	}
@@ -108,7 +106,13 @@ func (s *Server) Queue(args RPCQueueArgs, id *int64) error {
 	if err != nil {
 		return err
 	}
-	s.moreWork.Signal()
+
+	var empty Empty
+	select {
+	case s.moreWork <- empty:
+	default:
+	}
+
 	*id = args.Task.Id
 	return nil
 }
@@ -146,9 +150,7 @@ func (s *Server) processTasks() {
 			}()
 		}
 
-		s.moreWork.L.Lock()
-		s.moreWork.Wait()
-		s.moreWork.L.Unlock()
+		<-s.moreWork
 	}
 }
 
